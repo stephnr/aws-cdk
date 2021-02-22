@@ -4,12 +4,12 @@ import * as lambda from '@aws-cdk/aws-lambda';
 import * as s3 from '@aws-cdk/aws-s3';
 import * as sns from '@aws-cdk/aws-sns';
 import { Aws, Lazy, SecretValue, Stack, Token } from '@aws-cdk/core';
-import { Test } from 'nodeunit';
+import { nodeunitShim, Test } from 'nodeunit-shim';
 import * as cpactions from '../../lib';
 
 /* eslint-disable quote-props */
 
-export = {
+nodeunitShim({
   'Lambda invoke Action': {
     'properly serializes the object passed in userParameters'(test: Test) {
       const stack = stackIncludingLambdaInvokeCodePipeline({
@@ -295,7 +295,7 @@ export = {
       test.done();
     },
   },
-};
+});
 
 interface HelperProps {
   readonly userParams?: { [key: string]: any };
