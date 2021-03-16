@@ -1,5 +1,5 @@
-import * as cdk from '@aws-cdk/core';
 import { Device, Tmpfs } from '@aws-cdk/aws-ecs';
+import * as cdk from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { CfnJobDefinition } from './batch.generated';
 

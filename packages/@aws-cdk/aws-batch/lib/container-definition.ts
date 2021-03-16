@@ -1,23 +1,33 @@
+import * as ec2 from '@aws-cdk/aws-ec2';
 import * as iam from '@aws-cdk/aws-iam';
 import * as secretsmanager from '@aws-cdk/aws-secretsmanager';
-import * as ssm from '@aws-cdk/aws-ssm';
 import * as cdk from '@aws-cdk/core';
-import { Construct } from 'constructs';
 
+import { Construct } from 'constructs';
+import { CfnJobDefinition } from './batch.generated';
 import { ContainerImage, ContainerImageConfig } from './container-image';
+import { FargatePlatformVersion } from './fargate-service';
 import { LinuxParameters } from './linux-parameters';
-import { LogDriver, LogDriverConfig } from './log-drivers';
+import { LogDriverConfig } from './log-drivers';
+import { ResourceRequirements } from './resource-requirements';
 import { TaskDefinition } from './task-definition';
 
 // keep this import separate from other imports to reduce chance for merge conflicts with v2-main
 // eslint-disable-next-line no-duplicate-imports, import/order
 import { Construct as CoreConstruct } from '@aws-cdk/core';
-import { FargatePlatformVersion } from './fargate-service';
 
 /*
- * The options for creating a container definition.
+ * The properties for creating a Batch job definition container.
  */
-export interface ContainerDefinitionOptions {
+export interface ContainerProperties {
+  /**
+   * Indicates whether the job should have a public IP.
+   *
+   * This property is ignored for the EC2 launch type.
+   * @default false
+   */
+  readonly assignPublicIp?: boolean;
+
   /**
    * The command that is passed to the container.
    *
@@ -25,7 +35,7 @@ export interface ContainerDefinitionOptions {
    *
    * @default - CMD value built into container image.
    */
-  readonly command?: string[];
+  readonly command?: [ string ];
 
   /**
    * The environment variables to pass to the container.
@@ -54,190 +64,23 @@ export interface ContainerDefinitionOptions {
    * This string is passed directly to the Docker daemon.
    * Images in the Docker Hub registry are available by default.
    * Other repositories are specified with either repository-url/image:tag or repository-url/image@digest.
-   * TODO: Update these to specify using classes of IContainerImage
    */
   readonly image: ContainerImage;
 
   /**
-   * The minimum number of CPU units to reserve for the container.
+   * The type of instane to launch as for multi-parallel jobs. All node groups in a multi-node parallel job must use the same instance type.
    *
-   * @default - No minimum CPU units reserved.
+   * This property is ignored for single-node container and fargate launch type jobs.
+   * @default none
    */
-  readonly cpu?: number;
+  readonly instanceType?: ec2.InstanceType;
 
   /**
-   * Specifies whether networking is disabled within the container.
-   *
-   * When this parameter is true, networking is disabled within the container.
-   *
-   * @default false
+   * The batch job role that the container can assume for AWS permissions.
+   * @link https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html
+   * @default none
    */
-  readonly disableNetworking?: boolean;
-
-  /**
-   * A list of DNS search domains that are presented to the container.
-   *
-   * @default - No search domains.
-   */
-  readonly dnsSearchDomains?: string[];
-
-  /**
-   * A list of DNS servers that are presented to the container.
-   *
-   * @default - Default DNS servers.
-   */
-  readonly dnsServers?: string[];
-
-  /**
-   * A key/value map of labels to add to the container.
-   *
-   * @default - No labels.
-   */
-  readonly dockerLabels?: { [key: string]: string };
-
-  /**
-   * A list of strings to provide custom labels for SELinux and AppArmor multi-level security systems.
-   *
-   * @default - No security labels.
-   */
-  readonly dockerSecurityOptions?: string[];
-
-  /**
-   * The ENTRYPOINT value to pass to the container.
-   *
-   * @see https://docs.docker.com/engine/reference/builder/#entrypoint
-   *
-   * @default - Entry point configured in container.
-   */
-  readonly entryPoint?: string[];
-
-  /**
-   * The environment files to pass to the container.
-   *
-   * @see https://docs.aws.amazon.com/AmazonECS/latest/developerguide/taskdef-envfiles.html
-   *
-   * @default - No environment files.
-   */
-  readonly environmentFiles?: EnvironmentFile[];
-
-  /**
-   * The secret environment variables to pass to the container.
-   *
-   * @default - No secret environment variables.
-   */
-  readonly secrets?: { [key: string]: Secret };
-
-  /**
-   * Time duration (in seconds) to wait before giving up on resolving dependencies for a container.
-   *
-   * @default - none
-   */
-  readonly startTimeout?: cdk.Duration;
-
-  /**
-   * Time duration (in seconds) to wait before the container is forcefully killed if it doesn't exit normally on its own.
-   *
-   * @default - none
-   */
-  readonly stopTimeout?: cdk.Duration;
-
-  /**
-   * Specifies whether the container is marked essential.
-   *
-   * If the essential parameter of a container is marked as true, and that container fails
-   * or stops for any reason, all other containers that are part of the task are stopped.
-   * If the essential parameter of a container is marked as false, then its failure does not
-   * affect the rest of the containers in a task. All tasks must have at least one essential container.
-   *
-   * If this parameter is omitted, a container is assumed to be essential.
-   *
-   * @default true
-   */
-  readonly essential?: boolean;
-
-  /**
-   * A list of hostnames and IP address mappings to append to the /etc/hosts file on the container.
-   *
-   * @default - No extra hosts.
-   */
-  readonly extraHosts?: { [name: string]: string };
-
-  /**
-   * The health check command and associated configuration parameters for the container.
-   *
-   * @default - Health check configuration from container.
-   */
-  readonly healthCheck?: HealthCheck;
-
-  /**
-   * The hostname to use for your container.
-   *
-   * @default - Automatic hostname.
-   */
-  readonly hostname?: string;
-
-  /**
-   * The amount (in MiB) of memory to present to the container.
-   *
-   * If your container attempts to exceed the allocated memory, the container
-   * is terminated.
-   *
-   * At least one of memoryLimitMiB and memoryReservationMiB is required for non-Fargate services.
-   *
-   * @default - No memory limit.
-   */
-  readonly memoryLimitMiB?: number;
-
-  /**
-   * The soft limit (in MiB) of memory to reserve for the container.
-   *
-   * When system memory is under heavy contention, Docker attempts to keep the
-   * container memory to this soft limit. However, your container can consume more
-   * memory when it needs to, up to either the hard limit specified with the memory
-   * parameter (if applicable), or all of the available memory on the container
-   * instance, whichever comes first.
-   *
-   * At least one of memoryLimitMiB and memoryReservationMiB is required for non-Fargate services.
-   *
-   * @default - No memory reserved.
-   */
-  readonly memoryReservationMiB?: number;
-
-  /**
-   * Specifies whether the container is marked as privileged.
-   * When this parameter is true, the container is given elevated privileges on the host container instance (similar to the root user).
-   *
-   * @default false
-   */
-  readonly privileged?: boolean;
-
-  /**
-   * When this parameter is true, the container is given read-only access to its root file system.
-   *
-   * @default false
-   */
-  readonly readonlyRootFilesystem?: boolean;
-
-  /**
-   * The user name to use inside the container.
-   *
-   * @default root
-   */
-  readonly user?: string;
-
-  /**
-   * The working directory in which to run commands inside the container.
-   *
-   * @default /
-   */
-  readonly workingDirectory?: string;
-
-  /**
-   * The log configuration specification for the container.
-   *
-   * @default - Containers use the same logging driver that the Docker daemon uses.
-   */
-  readonly logging?: LogDriver;
+  readonly jobRole?: iam.Role;
 
   /**
    * Linux-specific modifications that are applied to the container, such as Linux kernel capabilities.
@@ -248,29 +91,69 @@ export interface ContainerDefinitionOptions {
   readonly linuxParameters?: LinuxParameters;
 
   /**
-   * The number of GPUs assigned to the container.
+   * The log configuration specification for the container.
    *
-   * @default - No GPUs assigned.
+   * @default - Containers use the same logging driver that the Docker daemon uses.
    */
-  readonly gpuCount?: number;
-}
+  readonly logDriverConfig?: LogDriverConfig;
 
-/**
- * The properties in a container definition.
- */
-export interface ContainerDefinitionProps extends ContainerDefinitionOptions {
   /**
-   * The name of the task definition that includes this container definition.
-   *
-   * [disable-awslint:ref-via-interface]
+   * The type and amount of resources to assign to a container.
    */
-  readonly taskDefinition: TaskDefinition;
+  readonly resourceRequirements?: ResourceRequirements;
+
+  /**
+   * The mount points for data volumes.
+   *
+   * @default none
+   */
+  readonly mountPoints?: [ MountPoint ];
+
+  /**
+   * When this parameter is true, the container is given elevated permissions to the host container instance.
+   *
+   * @default false
+   */
+  readonly privileged?: boolean;
+
+  /**
+   * When this parameter is true, the container is given read-only permission to its root filesystem.
+   *
+   * @default false
+   */
+  readonly readonlyRootFilesystem?: boolean;
+
+  /**
+   * The secrets for the container.
+   *
+   * @default none
+   */
+  readonly secrets?: [ secretsmanager.Secret ];
+
+  /**
+   * An array of ulimits to set in the container.
+   */
+  readonly ulimits?: [ Ulimit ];
+
+  /**
+   * The user name to use inside the container.
+   *
+   * @default root
+   */
+  readonly user?: string;
+
+  readonly volumes?: [ Volume ];
 }
 
 /**
  * A container definition is used in a task definition to describe the containers that are launched as part of a task.
  */
 export class ContainerDefinition extends CoreConstruct {
+  /**
+   * The name of the container properties that includes this container definition.
+   */
+  public readonly containerProperties: ContainerProperties;
+
   /**
    * The Linux-specific modifications that are applied to the container, such as Linux kernel capabilities.
    */
@@ -287,84 +170,34 @@ export class ContainerDefinition extends CoreConstruct {
   public readonly ulimits = new Array<Ulimit>();
 
   /**
-   * An array dependencies defined for container startup and shutdown.
-   */
-  public readonly containerDependencies = new Array<ContainerDependency>();
-
-  /**
-   * The name of this container
-   */
-  public readonly containerName: string;
-
-  /**
-   * Whether there was at least one memory limit specified in this definition
-   */
-  public readonly memoryLimitSpecified: boolean;
-
-  /**
-   * The environment files for this container
-   */
-  public readonly environmentFiles?: EnvironmentFileConfig[];
-
-  /**
    * The log configuration specification for the container.
    */
   public readonly logDriverConfig?: LogDriverConfig;
 
-  /**
-   * Whether this container definition references a specific JSON field of a secret
-   * stored in Secrets Manager.
-   */
-  public readonly referencesSecretJsonField?: boolean;
-
-  /**
-   * The configured container links
-   */
-  private readonly links = new Array<string>();
+  private _executionRole?: iam.Role;
 
   private readonly imageConfig: ContainerImageConfig;
 
-  private readonly secrets?: CfnTaskDefinition.SecretProperty[];
+  private readonly secrets: secretsmanager.Secret[];
 
   /**
    * Constructs a new instance of the ContainerDefinition class.
    */
-  constructor(scope: Construct, id: string, private readonly props: ContainerDefinitionProps) {
+  constructor(scope: Construct, id: string, containerProperties: ContainerProperties) {
     super(scope, id);
-    if (props.memoryLimitMiB !== undefined && props.memoryReservationMiB !== undefined) {
-      if (props.memoryLimitMiB < props.memoryReservationMiB) {
-        throw new Error('MemoryLimitMiB should not be less than MemoryReservationMiB.');
+
+    this.containerProperties = containerProperties;
+    this._executionRole = containerProperties.executionRole;
+    this.linuxParameters = containerProperties.linuxParameters;
+    this.mountPoints = containerProperties.mountPoints || [];
+    this.imageConfig = containerProperties.image.bind(this, this);
+    this.secrets = containerProperties.secrets || [];
+
+    for (const secret of this.secrets) {
+      if (containerProperties.jobRole) {
+        secret.grantRead(containerProperties.jobRole);
       }
-    }
-    this.memoryLimitSpecified = props.memoryLimitMiB !== undefined || props.memoryReservationMiB !== undefined;
-    this.linuxParameters = props.linuxParameters;
-    this.containerName = this.node.id;
-
-    this.imageConfig = props.image.bind(this, this);
-    if (props.logging) {
-      this.logDriverConfig = props.logging.bind(this, this);
-    }
-
-    if (props.secrets) {
-      this.secrets = [];
-      for (const [name, secret] of Object.entries(props.secrets)) {
-        if (secret.hasField) {
-          this.referencesSecretJsonField = true;
-        }
-        secret.grantRead(this.taskDefinition.obtainExecutionRole());
-        this.secrets.push({
-          name,
-          valueFrom: secret.arn,
-        });
-      }
-    }
-
-    if (props.environmentFiles) {
-      this.environmentFiles = [];
-
-      for (const environmentFile of props.environmentFiles) {
-        this.environmentFiles.push(environmentFile.bind(this));
-      }
+      this.secrets.push(secret);
     }
   }
 
@@ -394,7 +227,7 @@ export class ContainerDefinition extends CoreConstruct {
       name: scratch.name,
     };
 
-    this.taskDefinition.addVolume(volume);
+    this.containerProperties.volumes?.push(volume);
     this.addMountPoints(mountPoint);
   }
 
@@ -406,60 +239,15 @@ export class ContainerDefinition extends CoreConstruct {
   }
 
   /**
-   * This method adds one or more container dependencies to the container.
+   * Creates the task execution IAM role if it doesn't already exist.
    */
-  public addContainerDependencies(...containerDependencies: ContainerDependency[]) {
-    this.containerDependencies.push(...containerDependencies);
-  }
-
-  /**
-   * This method adds the specified statement to the IAM task execution policy in the task definition.
-   */
-  public addToExecutionPolicy(statement: iam.PolicyStatement) {
-    this.taskDefinition.addToExecutionRolePolicy(statement);
-  }
-
-  /**
-   * Returns the host port for the requested container port if it exists
-   */
-  public findPortMapping(containerPort: number, protocol: Protocol): PortMapping | undefined {
-    for (const portMapping of this.portMappings) {
-      const p = portMapping.protocol || Protocol.TCP;
-      const c = portMapping.containerPort;
-      if (c === containerPort && p === protocol) {
-        return portMapping;
-      }
+  public obtainExecutionRole(): iam.IRole {
+    if (!this._executionRole) {
+      this._executionRole = new iam.Role(this, 'ExecutionRole', {
+        assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+      });
     }
-    return undefined;
-  }
-
-  /**
-   * The inbound rules associated with the security group the task or service will use.
-   *
-   * This property is only used for tasks that use the awsvpc network mode.
-   */
-  public get ingressPort(): number {
-    if (this.portMappings.length === 0) {
-      throw new Error(`Container ${this.containerName} hasn't defined any ports. Call addPortMappings().`);
-    }
-    const defaultPortMapping = this.portMappings[0];
-
-    if (defaultPortMapping.hostPort !== undefined && defaultPortMapping.hostPort !== 0) {
-      return defaultPortMapping.hostPort;
-    }
-
-    return defaultPortMapping.containerPort;
-  }
-
-  /**
-   * The port the container will listen on.
-   */
-  public get containerPort(): number {
-    if (this.portMappings.length === 0) {
-      throw new Error(`Container ${this.containerName} hasn't defined any ports. Call addPortMappings().`);
-    }
-    const defaultPortMapping = this.portMappings[0];
-    return defaultPortMapping.containerPort;
+    return this._executionRole;
   }
 
   /**
@@ -467,96 +255,32 @@ export class ContainerDefinition extends CoreConstruct {
    *
    * @param _taskDefinition [disable-awslint:ref-via-interface] (unused but kept to avoid breaking change)
    */
-  public renderContainerDefinition(_taskDefinition?: TaskDefinition): CfnTaskDefinition.ContainerDefinitionProperty {
+  public renderContainerDefinition(_taskDefinition?: TaskDefinition): CfnJobDefinition.ContainerPropertiesProperty {
     return {
-      command: this.props.command,
-      cpu: this.props.cpu,
-      disableNetworking: this.props.disableNetworking,
-      dependsOn: cdk.Lazy.any({ produce: () => this.containerDependencies.map(renderContainerDependency) }, { omitEmptyArray: true }),
-      dnsSearchDomains: this.props.dnsSearchDomains,
-      dnsServers: this.props.dnsServers,
-      dockerLabels: this.props.dockerLabels,
-      dockerSecurityOptions: this.props.dockerSecurityOptions,
-      entryPoint: this.props.entryPoint,
-      essential: this.essential,
-      hostname: this.props.hostname,
+      networkConfiguration: {
+        assignPublicIp: this.containerProperties.assignPublicIp ? 'ENABLED' : 'DISABLED',
+      },
       image: this.imageConfig.imageName,
-      memory: this.props.memoryLimitMiB,
-      memoryReservation: this.props.memoryReservationMiB,
-      mountPoints: cdk.Lazy.any({ produce: () => this.mountPoints.map(renderMountPoint) }, { omitEmptyArray: true }),
-      name: this.containerName,
-      portMappings: cdk.Lazy.any({ produce: () => this.portMappings.map(renderPortMapping) }, { omitEmptyArray: true }),
-      privileged: this.props.privileged,
-      readonlyRootFilesystem: this.props.readonlyRootFilesystem,
-      repositoryCredentials: this.imageConfig.repositoryCredentials,
-      startTimeout: this.props.startTimeout && this.props.startTimeout.toSeconds(),
-      stopTimeout: this.props.stopTimeout && this.props.stopTimeout.toSeconds(),
-      ulimits: cdk.Lazy.any({ produce: () => this.ulimits.map(renderUlimit) }, { omitEmptyArray: true }),
-      user: this.props.user,
-      volumesFrom: cdk.Lazy.any({ produce: () => this.volumesFrom.map(renderVolumeFrom) }, { omitEmptyArray: true }),
-      workingDirectory: this.props.workingDirectory,
-      logConfiguration: this.logDriverConfig,
-      environment: this.props.environment && renderKV(this.props.environment, 'name', 'value'),
-      environmentFiles: this.environmentFiles && renderEnvironmentFiles(this.environmentFiles),
-      secrets: this.secrets,
-      extraHosts: this.props.extraHosts && renderKV(this.props.extraHosts, 'hostname', 'ipAddress'),
-      healthCheck: this.props.healthCheck && renderHealthCheck(this.props.healthCheck),
-      links: cdk.Lazy.list({ produce: () => this.links }, { omitEmpty: true }),
-      linuxParameters: this.linuxParameters && this.linuxParameters.renderLinuxParameters(),
-      resourceRequirements: (this.props.gpuCount !== undefined) ? renderResourceRequirements(this.props.gpuCount) : undefined,
+      command: this.containerProperties.command,
+      environment: this.containerProperties.environment && renderKV(this.containerProperties.environment, 'name', 'value'),
+      executionRoleArn: this.obtainExecutionRole().roleArn,
+      fargatePlatformConfiguration: {
+        platformVersion: this.containerProperties.fargatePlatformVersion,
+      },
+      instanceType: this.containerProperties.instanceType?.toString(),
+      jobRoleArn: this.containerProperties.jobRole?.roleArn,
+      linuxParameters: this.linuxParameters?.renderLinuxParameters(),
+      logConfiguration: this.logDriverConfig?.renderLogDriver(),
+      mountPoints: this.mountPoints,
+      privileged: this.containerProperties.privileged,
+      readonlyRootFilesystem: this.containerProperties.readonlyRootFilesystem,
+      resourceRequirements: this.containerProperties.resourceRequirements?.renderResourceRequirements(),
+      secrets: cdk.Lazy.any({ produce: () => this.secrets.map(renderSecret) }, { omitEmptyArray: true }),
+      ulimits: cdk.Lazy.any({ produce: () => this.containerProperties.ulimits?.map(renderUlimit) }, { omitEmptyArray: true }),
+      user: this.containerProperties.user,
+      volumes: this.containerProperties.volumes,
     };
   }
-}
-
-/**
- * The health check command and associated configuration parameters for the container.
- */
-export interface HealthCheck {
-  /**
-   * A string array representing the command that the container runs to determine if it is healthy.
-   * The string array must start with CMD to execute the command arguments directly, or
-   * CMD-SHELL to run the command with the container's default shell.
-   *
-   * For example: [ "CMD-SHELL", "curl -f http://localhost/ || exit 1" ]
-   */
-  readonly command: string[];
-
-  /**
-   * The time period in seconds between each health check execution.
-   *
-   * You may specify between 5 and 300 seconds.
-   *
-   * @default Duration.seconds(30)
-   */
-  readonly interval?: cdk.Duration;
-
-  /**
-   * The number of times to retry a failed health check before the container is considered unhealthy.
-   *
-   * You may specify between 1 and 10 retries.
-   *
-   * @default 3
-   */
-  readonly retries?: number;
-
-  /**
-   * The optional grace period within which to provide containers time to bootstrap before
-   * failed health checks count towards the maximum number of retries.
-   *
-   * You may specify between 0 and 300 seconds.
-   *
-   * @default No start period
-   */
-  readonly startPeriod?: cdk.Duration;
-
-  /**
-   * The time period in seconds to wait for a health check to succeed before it is considered a failure.
-   *
-   * You may specify between 2 and 60 seconds.
-   *
-   * @default Duration.seconds(5)
-   */
-  readonly timeout?: cdk.Duration;
 }
 
 function renderKV(env: { [key: string]: string }, keyName: string, valueName: string): any[] {
@@ -567,59 +291,11 @@ function renderKV(env: { [key: string]: string }, keyName: string, valueName: st
   return ret;
 }
 
-function renderEnvironmentFiles(environmentFiles: EnvironmentFileConfig[]): any[] {
-  const ret = [];
-  for (const environmentFile of environmentFiles) {
-    const s3Location = environmentFile.s3Location;
-
-    if (!s3Location) {
-      throw Error('Environment file must specify an S3 location');
-    }
-
-    ret.push({
-      type: environmentFile.fileType,
-      value: `arn:aws:s3:::${s3Location.bucketName}/${s3Location.objectKey}`,
-    });
-  }
-  return ret;
-}
-
-function renderHealthCheck(hc: HealthCheck): CfnTaskDefinition.HealthCheckProperty {
+function renderSecret(secret: secretsmanager.Secret): CfnJobDefinition.SecretProperty {
   return {
-    command: getHealthCheckCommand(hc),
-    interval: hc.interval?.toSeconds() ?? 30,
-    retries: hc.retries ?? 3,
-    startPeriod: hc.startPeriod?.toSeconds(),
-    timeout: hc.timeout?.toSeconds() ?? 5,
+    name: secret.secretName,
+    valueFrom: secret.secretArn,
   };
-}
-
-function getHealthCheckCommand(hc: HealthCheck): string[] {
-  const cmd = hc.command;
-  const hcCommand = new Array<string>();
-
-  if (cmd.length === 0) {
-    throw new Error('At least one argument must be supplied for health check command.');
-  }
-
-  if (cmd.length === 1) {
-    hcCommand.push('CMD-SHELL', cmd[0]);
-    return hcCommand;
-  }
-
-  if (cmd[0] !== 'CMD' && cmd[0] !== 'CMD-SHELL') {
-    hcCommand.push('CMD');
-  }
-
-  return hcCommand.concat(cmd);
-}
-
-function renderResourceRequirements(gpuCount: number): CfnTaskDefinition.ResourceRequirementProperty[] | undefined {
-  if (gpuCount === 0) { return undefined; }
-  return [{
-    type: 'GPU',
-    value: gpuCount.toString(),
-  }];
 }
 
 /**
@@ -667,7 +343,7 @@ export enum UlimitName {
   STACK = 'stack'
 }
 
-function renderUlimit(ulimit: Ulimit): CfnTaskDefinition.UlimitProperty {
+function renderUlimit(ulimit: Ulimit): CfnJobDefinition.UlimitProperty {
   return {
     name: ulimit.name,
     softLimit: ulimit.softLimit,
@@ -720,74 +396,6 @@ export enum ContainerDependencyCondition {
   HEALTHY = 'HEALTHY',
 }
 
-function renderContainerDependency(containerDependency: ContainerDependency): CfnTaskDefinition.ContainerDependencyProperty {
-  return {
-    containerName: containerDependency.container.containerName,
-    condition: containerDependency.condition || ContainerDependencyCondition.HEALTHY,
-  };
-}
-
-/**
- * Port mappings allow containers to access ports on the host container instance to send or receive traffic.
- */
-export interface PortMapping {
-  /**
-   * The port number on the container that is bound to the user-specified or automatically assigned host port.
-   *
-   * If you are using containers in a task with the awsvpc or host network mode, exposed ports should be specified using containerPort.
-   * If you are using containers in a task with the bridge network mode and you specify a container port and not a host port,
-   * your container automatically receives a host port in the ephemeral port range.
-   *
-   * For more information, see hostPort.
-   * Port mappings that are automatically assigned in this way do not count toward the 100 reserved ports limit of a container instance.
-   */
-  readonly containerPort: number;
-
-  /**
-   * The port number on the container instance to reserve for your container.
-   *
-   * If you are using containers in a task with the awsvpc or host network mode,
-   * the hostPort can either be left blank or set to the same value as the containerPort.
-   *
-   * If you are using containers in a task with the bridge network mode,
-   * you can specify a non-reserved host port for your container port mapping, or
-   * you can omit the hostPort (or set it to 0) while specifying a containerPort and
-   * your container automatically receives a port in the ephemeral port range for
-   * your container instance operating system and Docker version.
-   */
-  readonly hostPort?: number;
-
-  /**
-   * The protocol used for the port mapping. Valid values are Protocol.TCP and Protocol.UDP.
-   *
-   * @default TCP
-   */
-  readonly protocol?: Protocol
-}
-
-/**
- * Network protocol
- */
-export enum Protocol {
-  /**
-   * TCP
-   */
-  TCP = 'tcp',
-
-  /**
-   * UDP
-   */
-  UDP = 'udp',
-}
-
-function renderPortMapping(pm: PortMapping): CfnTaskDefinition.PortMappingProperty {
-  return {
-    containerPort: pm.containerPort,
-    hostPort: pm.hostPort,
-    protocol: pm.protocol || Protocol.TCP,
-  };
-}
-
 /**
  * The temporary disk space mounted to the container.
  */
@@ -833,35 +441,18 @@ export interface MountPoint {
   readonly sourceVolume: string,
 }
 
-function renderMountPoint(mp: MountPoint): CfnTaskDefinition.MountPointProperty {
-  return {
-    containerPath: mp.containerPath,
-    readOnly: mp.readOnly,
-    sourceVolume: mp.sourceVolume,
-  };
-}
-
-/**
- * The details on a data volume from another container in the same task definition.
- */
-export interface VolumeFrom {
+export interface Volume {
   /**
-   * The name of another container within the same task definition from which to mount volumes.
+   * The name of the volume. Up to 255 letters (uppercase and lowercase), numbers,
+   * hyphens, and underscores are allowed. This name is referenced in the sourceVolume
+   * parameter of container definition mountPoints.
    */
-  readonly sourceContainer: string,
+  readonly name?: string;
 
   /**
-   * Specifies whether the container has read-only access to the volume.
+   * The path on the host container instance that's presented to the container.
    *
-   * If this value is true, the container has read-only access to the volume.
-   * If this value is false, then the container can write to the volume.
+   * @link https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-batch-jobdefinition-volumeshost.html#cfn-batch-jobdefinition-volumeshost-sourcepath
    */
-  readonly readOnly: boolean,
-}
-
-function renderVolumeFrom(vf: VolumeFrom): CfnTaskDefinition.VolumeFromProperty {
-  return {
-    sourceContainer: vf.sourceContainer,
-    readOnly: vf.readOnly,
-  };
+  readonly hostPath?: string;
 }

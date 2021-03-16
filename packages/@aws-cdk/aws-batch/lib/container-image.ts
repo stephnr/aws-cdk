@@ -1,12 +1,11 @@
 import * as ecr from '@aws-cdk/aws-ecr';
-import { AssetImage, AssetImageProps, EcrImage, RepositoryImage, RepositoryImageProps } from '@aws-cdk/aws-ecs';
-import { CfnTaskDefinition } from '@aws-cdk/aws-ecs';
-import { ContainerDefinition } from './container-definition';
 import { DockerImageAsset } from '@aws-cdk/aws-ecr-assets';
-
+import { AssetImage, AssetImageProps, EcrImage, RepositoryImage, RepositoryImageProps } from '@aws-cdk/aws-ecs';
 // v2 - keep this import as a separate section to reduce merge conflict when forward merging with the v2 branch.
 // eslint-disable-next-line
 import { Construct as CoreConstruct } from '@aws-cdk/core';
+import { ContainerDefinition } from './container-definition';
+
 
 /**
  * Constructs for types of container images
@@ -46,7 +45,7 @@ export abstract class ContainerImage {
   public static fromDockerImageAsset(asset: DockerImageAsset): ContainerImage {
     return {
       bind(_scope: CoreConstruct, containerDefinition: ContainerDefinition): ContainerImageConfig {
-        asset.repository.grantPull(containerDefinition.taskDefinition.obtainExecutionRole());
+        asset.repository.grantPull(containerDefinition.obtainExecutionRole());
         return {
           imageName: asset.imageUri,
         };
@@ -68,9 +67,4 @@ export interface ContainerImageConfig {
    * Specifies the name of the container image.
    */
   readonly imageName: string;
-
-  /**
-   * Specifies the credentials used to access the image repository.
-   */
-  readonly repositoryCredentials?: CfnTaskDefinition.RepositoryCredentialsProperty;
 }
