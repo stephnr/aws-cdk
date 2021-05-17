@@ -10,6 +10,6 @@ jobs:
        contains(['aws-cdk-automation', 'dependabot[bot]', 'dependabot-preview[bot]'], github.event.pull_request.user.login)
     runs-on: ubuntu-latest
     steps:
-    - uses: hmarr/auto-approve-action@v2.0.0
+    - uses: hmarr/auto-approve-action@v2.1.0
       with:
         github-token: "${{ secrets.GITHUB_TOKEN }}"
